@@ -2,6 +2,43 @@
 
 ## 1. System Design
 
+What does my app do?
+- Users can add a pet, and select the characterisistics and actions particular to their pet.
+- Put in their work/life schedule
+- Schedule a walk, schedule feeding
+- See today's tasks
+- Reschedule or cancel a task!
+- Tick off completed tasks
+- View pet info and dashboard
+
+OBJECTS
+
+- Owner
+  - Name
+  - Occupation
+  - Number of pets, maybe?
+  - 
+
+- Pet
+  - Type (dog, cat, horse, giraffe)?
+  - gender
+  - Height, weight
+  - has illness?
+  - Takes meds?
+  - Retire
+
+- Activity/Task
+  - Duration
+  - Recurring or not?/Frequency
+  - Time(s) of occurence
+  - Remove
+  - Schedule (with set frequency)
+
+- Scheduler
+  - Schedule an extra task
+  - Mark as completed
+  - Remove a task
+
 **a. Initial design**
 
 - Briefly describe your initial UML design.

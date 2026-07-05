@@ -1,0 +1,35 @@
+classDiagram
+    class Owner {
+        +String name
+        +String occupation
+        +addPet(Pet pet) void
+    }
+
+    class Pet {
+        +String type
+        +String gender
+        +float height
+        +float weight
+        +boolean hasIllness
+        +boolean takesMeds
+        +retire() void
+    }
+
+    class Activity {
+        +int duration
+        +boolean recurring
+        +String frequency
+        +List~String~ times
+    }
+
+    class Schedule {
+        +List~Activity~ tasks
+        +scheduleTask(Activity task) void
+        +markAsCompleted(Activity task) void
+        +removeTask(Activity task) void
+    }
+
+    Owner "1" --> "*" Pet : owns
+    Owner "1" --> "1" Schedule : has
+    Schedule "1" --> "*" Activity : contains
+    Activity "*" --> "1" Pet : for
