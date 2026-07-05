@@ -44,6 +44,12 @@ OBJECTS
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+My initial UML design has 4 clas]ses - Pet, Owner, Activities and Schedule.
+
+The schedule can add an activity to the schedule, mark one as completed, and remove one.
+The Pet can retire!
+The Owner can add a pet!
+
 **b. Design changes**
 
 - Did your design change during implementation?
