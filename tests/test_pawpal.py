@@ -427,3 +427,238 @@ def test_conflicts_on_finds_overlapping_pairs():
 
     assert frozenset(("A", "B")) in pairs      # 08:30 starts inside A (08:00–09:00)
     assert frozenset(("A", "C")) not in pairs  # C starts at 09:00, exactly when A ends
+
+
+# ==========================================================================
+# Three headline requirements: sorting, recurrence, conflict detection
+# ==========================================================================
+
+def test_sorting_correctness_returns_chronological_order():
+    """Sorting Correctness: a day's tasks come back earliest-time-first."""
+    scheduler, pet = make_scheduler()
+    day = datetime.date(2026, 7, 4)
+    # Scheduled deliberately out of order (evening, dawn, midday, morning).
+    scheduler.schedule_task(pet, Task("Evening walk", day, datetime.time(20, 0), 30))
+    scheduler.schedule_task(pet, Task("Dawn feed", day, datetime.time(6, 30), 15))
+    scheduler.schedule_task(pet, Task("Midday play", day, datetime.time(13, 0), 20))
+    scheduler.schedule_task(pet, Task("Morning meds", day, datetime.time(9, 0), 5))
+
+    ordered = scheduler.tasks_for_day(day)
+
+    times = [t.time for t in ordered]
+    assert times == sorted(times)  # non-decreasing: a real timeline
+    assert [t.description for t in ordered] == [
+        "Dawn feed", "Morning meds", "Midday play", "Evening walk"
+    ]
+
+
+def test_recurrence_logic_daily_complete_creates_following_day():
+    """Recurrence Logic: completing a daily task spawns one for the next day."""
+    scheduler, pet = make_scheduler()
+    day = datetime.date(2026, 7, 4)
+    feeding = Task("Morning feeding", day, datetime.time(8, 0), 15, Frequency.DAILY)
+    scheduler.schedule_task(pet, feeding)
+
+    spawned = scheduler.mark_as_completed(feeding.id, day)
+    tomorrow = day + datetime.timedelta(days=1)
+
+    assert spawned is not None                       # a successor was created
+    assert spawned.date == tomorrow                  # for the following day
+    assert spawned.description == "Morning feeding"  # same activity
+    assert spawned.frequency is Frequency.DAILY      # still recurring
+    assert spawned.is_done_on(tomorrow) is False     # fresh, not pre-completed
+    # It actually shows up on tomorrow's schedule.
+    assert spawned in scheduler.tasks_for_day(tomorrow)
+
+
+def test_conflict_detection_flags_duplicate_times():
+    """Conflict Detection: scheduling a task at an occupied time is flagged."""
+    scheduler, pet = make_scheduler()
+    day = datetime.date(2026, 7, 4)
+    scheduler.schedule_task(pet, Task("Vet visit", day, datetime.time(15, 0), 30))
+
+    clash = Task("Grooming", day, datetime.time(15, 0), 30)  # exact same time slot
+    conflicts = scheduler.schedule_task(pet, clash)
+
+    assert len(conflicts) == 1                     # the clash is reported...
+    assert conflicts[0].description == "Vet visit"  # ...and names the occupant
+    # And it surfaces through the human-readable warning too.
+    assert scheduler.conflict_warning(clash) is not None
+
+
+# ==========================================================================
+# Edge cases: Task.occurs_on across every frequency
+# (Scheduler tests above lean on EVERY_N_DAYS + end_date; these fill the gaps)
+# ==========================================================================
+
+MONDAY = datetime.date(2026, 7, 6)  # a known Monday, for weekday-based tests
+NINE_AM = datetime.time(9, 0)
+
+
+def bare_task(freq: Frequency = Frequency.ONCE, *, date=MONDAY, time=NINE_AM,
+              duration: int = 30, **kw) -> Task:
+    """A Task with defaults; override only what the test cares about."""
+    return Task("t", date, time, duration, freq, **kw)
+
+
+def test_occurs_on_once_only_its_own_day():
+    t = bare_task(Frequency.ONCE)
+    assert t.occurs_on(MONDAY) is True
+    assert t.occurs_on(MONDAY + datetime.timedelta(days=1)) is False
+    assert t.occurs_on(MONDAY - datetime.timedelta(days=1)) is False  # before start
+
+
+def test_occurs_on_daily_every_day_from_start():
+    t = bare_task(Frequency.DAILY)
+    assert t.occurs_on(MONDAY) is True                                 # start day
+    assert t.occurs_on(MONDAY + datetime.timedelta(days=1)) is True
+    assert t.occurs_on(MONDAY + datetime.timedelta(days=365)) is True
+    assert t.occurs_on(MONDAY - datetime.timedelta(days=1)) is False   # before start
+
+
+def test_occurs_on_weekly_matches_weekday_only():
+    t = bare_task(Frequency.WEEKLY)  # anchored on MONDAY
+    assert t.occurs_on(MONDAY) is True
+    assert t.occurs_on(MONDAY + datetime.timedelta(weeks=1)) is True   # next Monday
+    assert t.occurs_on(MONDAY + datetime.timedelta(days=1)) is False   # a Tuesday
+    assert t.occurs_on(MONDAY - datetime.timedelta(weeks=1)) is False  # prior Mon, pre-start
+
+
+def test_occurs_on_end_date_is_inclusive():
+    end = MONDAY + datetime.timedelta(days=2)
+    t = bare_task(Frequency.DAILY, end_date=end)
+    assert t.occurs_on(end) is True                                    # last active day counts
+    assert t.occurs_on(end + datetime.timedelta(days=1)) is False      # day after end
+
+
+# ==========================================================================
+# Edge cases: Task.next_occurrence (untested directly before — only via
+# mark_as_completed). Its docstring promises correct month/year rollover.
+# ==========================================================================
+
+def test_next_occurrence_once_returns_none():
+    assert bare_task(Frequency.ONCE).next_occurrence(MONDAY) is None
+
+
+def test_next_occurrence_daily_advances_one_day():
+    nxt = bare_task(Frequency.DAILY).next_occurrence(MONDAY)
+    assert nxt is not None
+    assert nxt.date == MONDAY + datetime.timedelta(days=1)
+
+
+def test_next_occurrence_weekly_advances_one_week():
+    nxt = bare_task(Frequency.WEEKLY).next_occurrence(MONDAY)
+    assert nxt.date == MONDAY + datetime.timedelta(weeks=1)
+
+
+def test_next_occurrence_every_n_days_uses_interval():
+    nxt = bare_task(Frequency.EVERY_N_DAYS, interval=10).next_occurrence(MONDAY)
+    assert nxt.date == MONDAY + datetime.timedelta(days=10)
+
+
+def test_next_occurrence_handles_month_rollover():
+    """Docstring's headline promise: Jul 31 + 1 day -> Aug 1, not 'Jul 32'."""
+    jul31 = datetime.date(2026, 7, 31)
+    nxt = bare_task(Frequency.DAILY).next_occurrence(jul31)
+    assert nxt.date == datetime.date(2026, 8, 1)
+
+
+def test_next_occurrence_handles_year_rollover():
+    dec31 = datetime.date(2026, 12, 31)
+    nxt = bare_task(Frequency.DAILY).next_occurrence(dec31)
+    assert nxt.date == datetime.date(2027, 1, 1)
+
+
+def test_next_occurrence_none_past_end_date():
+    t = bare_task(Frequency.DAILY, end_date=MONDAY)  # ends on the completion day
+    assert t.next_occurrence(MONDAY) is None
+
+
+def test_next_occurrence_is_fresh_copy_new_id_no_completions():
+    original = bare_task(Frequency.DAILY, priority=Priority.HIGH, duration=45)
+    original.completed_on.add(MONDAY)
+    nxt = original.next_occurrence(MONDAY)
+
+    # Attributes carried forward...
+    assert nxt.description == original.description
+    assert nxt.priority is Priority.HIGH
+    assert nxt.duration == 45
+    assert nxt.frequency is Frequency.DAILY
+    # ...but it's a genuinely new, un-ticked instance.
+    assert nxt.id != original.id
+    assert nxt.completed_on == set()
+
+
+def test_next_occurrence_preserves_interval_and_end_date():
+    end = MONDAY + datetime.timedelta(days=100)
+    t = bare_task(Frequency.EVERY_N_DAYS, interval=5, end_date=end)
+    nxt = t.next_occurrence(MONDAY)
+    assert nxt.interval == 5
+    assert nxt.end_date == end
+
+
+# ==========================================================================
+# Edge cases: frequency semantics via Task.is_recurring
+# ==========================================================================
+
+@pytest.mark.parametrize(
+    "freq, recurring",
+    [
+        (Frequency.ONCE, False),
+        (Frequency.DAILY, True),
+        (Frequency.WEEKLY, True),
+        (Frequency.EVERY_N_DAYS, True),
+    ],
+)
+def test_is_recurring_matches_frequency(freq, recurring):
+    assert bare_task(freq).is_recurring is recurring
+
+
+# ==========================================================================
+# Edge cases: Task.overlaps (direct — boundary, symmetry, cross-day)
+# ==========================================================================
+
+def test_overlaps_same_day_and_time():
+    a = bare_task(time=datetime.time(9, 0), duration=30)
+    b = bare_task(time=datetime.time(9, 15), duration=30)
+    assert a.overlaps(b) is True
+
+
+def test_overlaps_touching_boundary_does_not_count():
+    """A ends exactly when B begins -> no collision (half-open intervals)."""
+    a = bare_task(time=datetime.time(9, 0), duration=30)   # 09:00-09:30
+    b = bare_task(time=datetime.time(9, 30), duration=30)  # 09:30-10:00
+    assert a.overlaps(b) is False
+
+
+def test_overlaps_same_day_disjoint_times():
+    a = bare_task(time=datetime.time(9, 0), duration=30)
+    b = bare_task(time=datetime.time(11, 0), duration=30)
+    assert a.overlaps(b) is False
+
+
+def test_overlaps_same_time_different_days():
+    a = bare_task(date=MONDAY, time=NINE_AM, duration=30)
+    b = bare_task(date=MONDAY + datetime.timedelta(days=1), time=NINE_AM, duration=30)
+    assert a.overlaps(b) is False
+
+
+def test_overlaps_is_symmetric():
+    a = bare_task(time=datetime.time(9, 0), duration=30)
+    b = bare_task(time=datetime.time(9, 15), duration=30)
+    assert a.overlaps(b) == b.overlaps(a)
+
+
+def test_overlaps_recurring_tasks_share_a_future_day():
+    """Two dailies at the same time collide even though neither is a one-off."""
+    a = bare_task(Frequency.DAILY, time=NINE_AM)
+    b = bare_task(Frequency.DAILY, time=NINE_AM, date=MONDAY + datetime.timedelta(days=3))
+    assert a.overlaps(b) is True
+
+
+def test_overlaps_once_vs_daily_that_starts_later():
+    once = bare_task(Frequency.ONCE, date=MONDAY, time=NINE_AM)
+    later_daily = bare_task(
+        Frequency.DAILY, date=MONDAY + datetime.timedelta(days=1), time=NINE_AM
+    )
+    assert once.overlaps(later_daily) is False  # daily hasn't begun on the one-off's day
