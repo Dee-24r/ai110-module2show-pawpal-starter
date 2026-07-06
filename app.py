@@ -144,15 +144,37 @@ else:
                     frequency=t_freq,
                     interval=int(t_interval),
                 )
-                # >>> logic layer: build the clash message (or None) <<<
-                warning = scheduler.conflict_warning(task)
-                scheduler.schedule_task(pet, task)
-                st.success(f"Scheduled '{task.description}' for {pet.name}.")
-                if warning:
-                    # >>> logic layer: propose the next open slot <<<
+                # >>> logic layer: detect clashes across ALL pets <<<
+                conflicts = scheduler.find_conflicts(task)
+                scheduler.schedule_task(pet, task)  # saved regardless (non-blocking)
+                st.success(
+                    f"✅ Scheduled '{task.description}' for {pet.name} "
+                    f"at {task.time:%H:%M}."
+                )
+                if conflicts:
+                    # A pet owner is one person who can't be two places at once,
+                    # so we WARN (amber, not a red error) instead of refusing the
+                    # save — and we make it actionable: name each clash and offer
+                    # the next open slot so the fix is one glance away.
+                    detail = "\n".join(
+                        f"- **{c.description}** at {c.time:%H:%M}"
+                        + (f" ({cp.name})" if (cp := owner.pet_of(c.id)) else "")
+                        for c in conflicts
+                    )
                     slot = scheduler.find_free_slot(t_date, task.duration)
-                    tip = f" Next free slot: **{slot:%H:%M}**." if slot else ""
-                    st.warning(f"⚠️ {warning}{tip}")
+                    tip = (
+                        f"\n\n💡 Next free slot on {t_date:%b %d}: "
+                        f"**{slot:%H:%M}** — edit the task to move it there."
+                        if slot
+                        else "\n\n💡 That day is fully booked in your waking hours."
+                    )
+                    st.warning(
+                        f"⚠️ **Heads up — this overlaps another task.**\n\n"
+                        f"'{task.description}' at {task.time:%H:%M} clashes with:\n"
+                        f"{detail}{tip}\n\n"
+                        "_Saved anyway — just make sure you can manage both, "
+                        "or reschedule one._"
+                    )
 
 st.divider()
 
@@ -176,6 +198,10 @@ else:
         st.caption(f"⏭️ Next up: **{next_up.time:%H:%M}** — {next_up.description}")
     if load:
         st.caption("🐾 " + " · ".join(f"{name}: {mins} min" for name, mins in load.items()))
+
+    # A little positive reinforcement once the whole day is ticked off.
+    if all(t.is_done_on(today) for t in today_tasks):
+        st.success("🎉 Everything for today is done — go relax with your pets!")
 
     overdue = scheduler.overdue_tasks()
     high_overdue = [t for t in overdue if t.priority is Priority.HIGH]
@@ -219,3 +245,62 @@ else:
         if cols[3].button("Remove", key=f"rm_{task.id}"):
             scheduler.remove_task(task.id)  # >>> logic layer <<<
             st.rerun()
+
+st.divider()
+
+# --- Browse Tasks (sorted + filtered) -------------------------------------
+# A read-only, professional overview for ANY date, showing off the Scheduler's
+# filtering and sorting. (Today's Schedule above stays interactive; this is the
+# "at a glance" table view.)
+st.subheader("🔎 Browse Tasks")
+if not scheduler.all_tasks():
+    st.info("No tasks scheduled yet. Add some above to see them here.")
+else:
+    fc1, fc2, fc3 = st.columns(3)
+    pet_choice = fc1.selectbox(
+        "Pet", ["All pets"] + [p.name for p in owner.pets], key="browse_pet"
+    )
+    status_choice = fc2.selectbox("Status", ["All", "Pending", "Done"], key="browse_status")
+    view_date = fc3.date_input("On date", value=today, key="browse_date")
+
+    # Translate the UI choices into logic-layer filter arguments.
+    pet_name = None if pet_choice == "All pets" else pet_choice
+    completed = {"All": None, "Pending": False, "Done": True}[status_choice]
+
+    # >>> logic layer: filter by pet + completion, keep that day's occurrences,
+    #     then sort chronologically <<<
+    filtered = scheduler.filter_tasks(pet_name=pet_name, completed=completed, day=view_date)
+    day_view = scheduler.sort_by_time([t for t in filtered if t.occurs_on(view_date)])
+
+    if not day_view:
+        st.info(f"No matching tasks on {view_date:%A, %b %d}.")
+    else:
+        rows = [
+            {
+                "Time": f"{t.time:%H:%M}",
+                "Task": t.description,
+                "Pet": (owner.pet_of(t.id).name if owner.pet_of(t.id) else "—"),
+                "Duration": f"{t.duration} min",
+                "Priority": t.priority.name.title(),
+                "Repeats": t.frequency.value.replace("_", " ").title(),
+                "Status": "✅ Done" if t.is_done_on(view_date) else "⬜ Pending",
+            }
+            for t in day_view
+        ]
+        st.table(rows)
+        st.caption(
+            f"Showing {len(rows)} task(s) on {view_date:%A, %b %d} — "
+            "sorted by time of day."
+        )
+
+        # >>> logic layer: flag overlapping pairs on the viewed day <<<
+        day_clashes = scheduler.conflicts_on(view_date)
+        if day_clashes:
+            lines = "\n".join(
+                f"- **{a.description}** ({a.time:%H:%M}) ↔ "
+                f"**{b.description}** ({b.time:%H:%M})"
+                for a, b in day_clashes
+            )
+            st.warning(f"⚠️ {len(day_clashes)} time clash(es) on this day:\n{lines}")
+        else:
+            st.success("✅ No scheduling conflicts on this day.")

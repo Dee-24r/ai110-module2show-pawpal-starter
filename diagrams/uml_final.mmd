@@ -1,0 +1,87 @@
+classDiagram
+    class Frequency {
+        <<enumeration>>
+        ONCE
+        DAILY
+        WEEKLY
+        EVERY_N_DAYS
+    }
+
+    class Priority {
+        <<enumeration>>
+        LOW
+        NORMAL
+        HIGH
+    }
+
+    class Owner {
+        +str name
+        +str occupation
+        +List~Pet~ pets
+        +add_pet(Pet) void
+        +retire_pet(Pet) void
+        +all_tasks() List~Task~
+        +pet_of(int task_id) Pet
+    }
+
+    class Pet {
+        +str name
+        +str type
+        +str gender
+        +float height
+        +float weight
+        +bool has_illness
+        +bool takes_meds
+        +bool retired
+        +List~Task~ tasks
+        +add_task(Task) void
+        +remove_task(int task_id) void
+        +get_task(int task_id) Task
+        +retire() void
+    }
+
+    class Task {
+        +str description
+        +date date
+        +time time
+        +int duration
+        +Frequency frequency
+        +Priority priority
+        +int interval
+        +date end_date
+        +Set~date~ completed_on
+        +int id
+        +is_recurring() bool
+        +is_done_on(date) bool
+        +occurs_on(date) bool
+        +next_occurrence(date) Task
+        +overlaps(Task) bool
+    }
+
+    class Scheduler {
+        +Owner owner
+        +all_tasks() List~Task~
+        +schedule_task(Pet, Task) List~Task~
+        +find_conflicts(Task) List~Task~
+        +conflict_warning(Task) str
+        +tasks_for_day(date) List~Task~
+        +tasks_for_today() List~Task~
+        +sort_by_time(List~Task~) List~Task~
+        +filter_tasks(str, bool, date) List~Task~
+        +find_free_slot(date, int) time
+        +suggest_tasks(Pet) List~Task~
+        +get_task(int task_id) Task
+        +mark_as_completed(int, date) Task
+        +mark_as_incomplete(int, date) void
+        +remove_task(int) void
+        +next_task(datetime) Task
+        +overdue_tasks(datetime) List~Task~
+        +daily_load(date) Map
+        +conflicts_on(date) List~Task~
+    }
+
+    Owner "1" *-- "*" Pet : owns
+    Pet "1" *-- "*" Task : schedules
+    Scheduler "1" --> "1" Owner : operates on
+    Task --> Frequency : uses
+    Task --> Priority : uses

@@ -12,6 +12,47 @@ A busy pet owner needs help staying consistent with pet care. They want an assis
 
 Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
 
+## ✨ Features
+
+What PawPal+ actually does, and the algorithm behind each one (all in
+[`pawpal_system.py`](pawpal_system.py)):
+
+**Scheduling & sorting**
+- **Sorting by time** — a day's tasks are returned as a chronological timeline via
+  a stable sort keyed on `datetime.time` (`O(n log n)` Timsort, no string parsing).
+- **Priority tie-breaking** — when two tasks share a time, the sort key `(time,
+  -priority)` floats the higher-`Priority` one (e.g. medication) to the top.
+- **Free-slot finder** — sweeps a day's busy intervals in order and returns the
+  first gap big enough for a new task within the owner's waking window.
+
+**Recurring tasks**
+- **Daily / weekly / every-N-days recurrence** — `Task.occurs_on(day)` decides if a
+  task lands on a date: weekly matches the weekday, every-N-days uses modular
+  arithmetic `(day - start).days % interval == 0`, all bounded by `date`/`end_date`.
+- **Auto roll-over on completion** — completing a recurring task spawns its next
+  occurrence with `datetime.timedelta`, so month/year boundaries are correct
+  (Jul 31 → Aug 1). It's idempotent (never double-spawns) and stops at `end_date`.
+- **Per-day completion** — completion is stored as a *set of dates* (`completed_on`),
+  so a daily task done today is still pending tomorrow (and can be un-ticked).
+
+**Conflict detection**
+- **Conflict warnings** — a non-blocking, human-readable message naming each
+  clashing task, its time, and its pet; returns `None` when clear (never raises).
+- **Overlap test** — two tasks collide only if they *share a calendar day* AND their
+  time intervals overlap (half-open math, so back-to-back tasks don't clash).
+- **Whole-day conflict audit** — `conflicts_on(day)` finds every overlapping pair
+  with a sweep line (keep only still-"open" tasks), `O(n log n)` instead of `O(n²)`.
+- **Cross-pet awareness** — conflicts are checked across *all* pets, since one owner
+  can't be in two places at once.
+
+**Planning insights & views**
+- **Filtering** — `filter_tasks()` narrows by pet, by per-day completion status, or both.
+- **Next up & overdue** — `next_task()` scans forward (up to a year) for the soonest
+  unfinished task; `overdue_tasks()` flags today's past-due, not-yet-done items.
+- **Daily workload** — `daily_load()` totals scheduled minutes per pet at a glance.
+- **Attribute-driven suggestions** — `suggest_tasks()` proposes a starter routine from
+  a pet's flags (dog → walk, meds/illness → HIGH-priority reminders; none if retired).
+
 ## What you will build
 
 Your final app should:
@@ -86,6 +127,103 @@ Sample test output:
 # Paste your pytest output here
 ```
 
+## 📐 Class Diagram
+
+The final architecture (rendered live by GitHub from the Mermaid source in
+[`diagrams/uml_final.mmd`](diagrams/uml_final.mmd)). Each `Pet` owns its own
+tasks, and the `Scheduler` operates *over* the `Owner` rather than storing tasks
+itself — so the pets stay the single source of truth.
+
+```mermaid
+classDiagram
+    class Frequency {
+        <<enumeration>>
+        ONCE
+        DAILY
+        WEEKLY
+        EVERY_N_DAYS
+    }
+
+    class Priority {
+        <<enumeration>>
+        LOW
+        NORMAL
+        HIGH
+    }
+
+    class Owner {
+        +str name
+        +str occupation
+        +List~Pet~ pets
+        +add_pet(Pet) void
+        +retire_pet(Pet) void
+        +all_tasks() List~Task~
+        +pet_of(int task_id) Pet
+    }
+
+    class Pet {
+        +str name
+        +str type
+        +str gender
+        +float height
+        +float weight
+        +bool has_illness
+        +bool takes_meds
+        +bool retired
+        +List~Task~ tasks
+        +add_task(Task) void
+        +remove_task(int task_id) void
+        +get_task(int task_id) Task
+        +retire() void
+    }
+
+    class Task {
+        +str description
+        +date date
+        +time time
+        +int duration
+        +Frequency frequency
+        +Priority priority
+        +int interval
+        +date end_date
+        +Set~date~ completed_on
+        +int id
+        +is_recurring() bool
+        +is_done_on(date) bool
+        +occurs_on(date) bool
+        +next_occurrence(date) Task
+        +overlaps(Task) bool
+    }
+
+    class Scheduler {
+        +Owner owner
+        +all_tasks() List~Task~
+        +schedule_task(Pet, Task) List~Task~
+        +find_conflicts(Task) List~Task~
+        +conflict_warning(Task) str
+        +tasks_for_day(date) List~Task~
+        +tasks_for_today() List~Task~
+        +sort_by_time(List~Task~) List~Task~
+        +filter_tasks(str, bool, date) List~Task~
+        +find_free_slot(date, int) time
+        +suggest_tasks(Pet) List~Task~
+        +get_task(int task_id) Task
+        +mark_as_completed(int, date) Task
+        +mark_as_incomplete(int, date) void
+        +remove_task(int) void
+        +next_task(datetime) Task
+        +overdue_tasks(datetime) List~Task~
+        +daily_load(date) Map
+        +conflicts_on(date) List~Task~
+    }
+
+    Owner "1" *-- "*" Pet : owns
+    Pet "1" *-- "*" Task : schedules
+    Scheduler "1" --> "1" Owner : operates on
+    Task --> Frequency : uses
+    Task --> Priority : uses
+```
+
 ## 📐 Smarter Scheduling
 
 All scheduling logic lives in the `Scheduler` "brain" and the `Task` data class in
@@ -143,23 +281,6 @@ All scheduling logic lives in the `Scheduler` "brain" and the `Task` data class 
 ## Testing PawPal+
 python -m pytest
 
-Tests cover the tasks in the following:
- 
-
-```
-PS C:\Users\fummy\Documents\Codepath\code_and_labs\PawPal\ai110-module2show-pawpal-starter> python -m pytest
-================================================== test session starts ===================================================
-platform win32 -- Python 3.13.2, pytest-9.0.3, pluggy-1.6.0
-rootdir: C:\Users\fummy\Documents\Codepath\code_and_labs\PawPal\ai110-module2show-pawpal-starter
-plugins: anyio-4.13.0
-collected 53 items                                                                                                        
-
-tests\test_pawpal.py .....................................................                                          [100%]
-
-=================================================== 53 passed in 0.13s ===================================================
-
-```
-
 ### What my tests actually check
 
 I wrote 53 tests in [`tests/test_pawpal.py`](tests/test_pawpal.py). I tried to test each core behavior on its own AND the tricky edge cases I ran into while building, so I grouped them like this:
@@ -199,6 +320,23 @@ I wrote 53 tests in [`tests/test_pawpal.py`](tests/test_pawpal.py). I tried to t
 - `filter_tasks()` by pet name, by completion (per day), and both combined.
 - `daily_load()` adds up minutes per pet, and `conflicts_on()` finds every overlapping pair in a day.
 - `suggest_tasks()` gives tasks based on the pet's info (dog → walk, meds/illness → HIGH priority) and gives nothing for a retired pet.
+
+```
+PS C:\Users\fummy\Documents\Codepath\code_and_labs\PawPal\ai110-module2show-pawpal-starter> python -m pytest
+================================================== test session starts ===================================================
+platform win32 -- Python 3.13.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: C:\Users\fummy\Documents\Codepath\code_and_labs\PawPal\ai110-module2show-pawpal-starter
+plugins: anyio-4.13.0
+collected 53 items                                                                                                        
+
+tests\test_pawpal.py .....................................................                                          [100%]
+
+=================================================== 53 passed in 0.13s ===================================================
+
+```
+
+I would rate it a 4-star. All 53 tests were passed at first. Only the logic layer is tested. streamlit UI and the CLI is not tested. The share_a_day test only scans 366 days. there's no input validation task for stuff like duration=0 or interval <1
+
 
 ### Bonus owner-facing helpers
 | Feature | Method(s) |
