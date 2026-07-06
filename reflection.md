@@ -55,6 +55,11 @@ The Owner can add a pet!
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
 
+Yes, I changed design before I started implementing.
+
+Now activities have the scheduling method.
+and scheduler schedules recurring activities.
+
 ---
 
 ## 2. Scheduling Logic and Tradeoffs
@@ -69,6 +74,7 @@ The Owner can add a pet!
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+There was no specific performance tradeoffs. the only tradeoff was in the code. It would be cleaner but it would run twice (once in conflict_warning, once in schedule_task).
 ---
 
 ## 3. AI Collaboration
